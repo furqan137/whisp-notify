@@ -1,3 +1,6 @@
+// ✅ Load environment variables from .env file
+require("dotenv").config();
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const admin = require("firebase-admin");
@@ -5,10 +8,20 @@ const admin = require("firebase-admin");
 const app = express();
 app.use(bodyParser.json());
 
-// ✅ Path to your Firebase Admin SDK JSON key file
-const serviceAccount = require("./serviceAccountkey.json");
+// ✅ Initialize Firebase Admin using environment variables
+const serviceAccount = {
+  type: process.env.TYPE,
+  project_id: process.env.PROJECT_ID,
+  private_key_id: process.env.PRIVATE_KEY_ID,
+  private_key: process.env.PRIVATE_KEY.replace(/\\n/g, "\n"),
+  client_email: process.env.CLIENT_EMAIL,
+  client_id: process.env.CLIENT_ID,
+  auth_uri: process.env.AUTH_URI,
+  token_uri: process.env.TOKEN_URI,
+  auth_provider_x509_cert_url: process.env.AUTH_PROVIDER_X509_CERT_URL,
+  client_x509_cert_url: process.env.CLIENT_X509_CERT_URL,
+};
 
-// ✅ Initialize Firebase Admin
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -52,7 +65,7 @@ app.post("/send-chat-notification", async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    const fcmToken = userDoc.data().deviceToken; // ✅ FIXED LINE
+    const fcmToken = userDoc.data().deviceToken;
     if (!fcmToken) {
       console.log("⚠️ No FCM token for user:", toUid);
       return res.status(400).json({ success: false, message: "User has no FCM token" });
@@ -80,7 +93,7 @@ app.post("/send-chat-notification", async (req, res) => {
 });
 
 // ✅ Run server
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
