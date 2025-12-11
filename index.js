@@ -1,4 +1,8 @@
-// ✅ Load environment variables
+// ==============================================
+// 🔥 WHISP NOTIFICATION SERVER — DEBUG VERSION
+// ==============================================
+
+// 1) Load environment variables
 require("dotenv").config();
 
 const express = require("express");
@@ -14,39 +18,56 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // -----------------------------
-// 🌍 Root Route (Fix for Render)
+// 🌍 Root Route
 // -----------------------------
 app.get("/", (req, res) => {
-  res.send("🔥 Whisp Notify Server Running Successfully!");
+  res.send("🔥 Whisp Notify Server Running (DEBUG MODE ENABLED)");
 });
 
 // -----------------------------
-// 📁 Make uploads folder publicly accessible
+// 📂 Public uploads folder
 // -----------------------------
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // -----------------------------
-// 🔥 Firebase Admin Initialization
+// 🛠 Firebase Admin Initialization (DEBUG)
 // -----------------------------
-const serviceAccount = {
-  type: process.env.TYPE,
-  project_id: process.env.PROJECT_ID,
-  private_key_id: process.env.PRIVATE_KEY_ID,
-  private_key: process.env.PRIVATE_KEY, // FIXED — no replace()
-  client_email: process.env.CLIENT_EMAIL,
-  client_id: process.env.CLIENT_ID,
-  auth_uri: process.env.AUTH_URI,
-  token_uri: process.env.TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.AUTH_PROVIDER_X509_CERT_URL,
-  client_x509_cert_url: process.env.CLIENT_X509_CERT_URL,
-};
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+console.log("🔧 DEBUG: Validating Firebase Admin ENV variables...");
+console.log({
+  project_id: process.env.PROJECT_ID,
+  client_email: process.env.CLIENT_EMAIL,
+  private_key_exists: !!process.env.PRIVATE_KEY
 });
 
+// IMPORTANT: MUST convert newline escapes to real newlines
+let fixedPrivateKey = process.env.PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+try {
+  const serviceAccount = {
+    type: process.env.TYPE,
+    project_id: process.env.PROJECT_ID,
+    private_key_id: process.env.PRIVATE_KEY_ID,
+    private_key: fixedPrivateKey,
+    client_email: process.env.CLIENT_EMAIL,
+    client_id: process.env.CLIENT_ID,
+    auth_uri: process.env.AUTH_URI,
+    token_uri: process.env.TOKEN_URI,
+    auth_provider_x509_cert_url: process.env.AUTH_PROVIDER_X509_CERT_URL,
+    client_x509_cert_url: process.env.CLIENT_X509_CERT_URL,
+  };
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+
+  console.log("✅ Firebase Admin Initialized Successfully");
+} catch (err) {
+  console.error("❌ Firebase Admin Initialization Failed:", err);
+}
+
 // -----------------------------
-// 🔥 Multer setup
+// 📁 Multer (for uploads)
 // -----------------------------
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -62,6 +83,8 @@ const upload = multer({ storage });
 // 🔔 Helper: Send Notification
 // -----------------------------
 async function sendNotification(token, title, body, type = "chat") {
+  console.log("📨 DEBUG Sending Notification:", { token, title, body, type });
+
   const message = {
     token,
     notification: { title, body },
@@ -73,119 +96,118 @@ async function sendNotification(token, title, body, type = "chat") {
   };
 
   try {
-    await admin.messaging().send(message);
-    console.log(`✅ Notification sent: ${type}`);
+    const response = await admin.messaging().send(message);
+    console.log("✅ Notification Sent Successfully:", response);
+    return true;
   } catch (err) {
-    console.error("❌ Error sending notification:", err);
+    console.error("❌ Notification Send Failed:", err);
+    return false;
   }
 }
 
 // -----------------------------
-// POST /send-notification
+// 📌 POST /send-notification
 // -----------------------------
 app.post("/send-notification", async (req, res) => {
-  const { token, title, body } = req.body;
+  console.log("📥 DEBUG Request → /send-notification:", req.body);
 
+  const { token, title, body } = req.body;
   if (!token || !title || !body)
     return res.status(400).send({ error: "Missing fields" });
 
-  await sendNotification(token, title, body);
-  res.send({ success: true });
+  const ok = await sendNotification(token, title, body);
+
+  res.send({ success: ok });
 });
 
 // -----------------------------
-// POST /send-chat-notification
+// 📌 POST /send-chat-notification
 // -----------------------------
 app.post("/send-chat-notification", async (req, res) => {
+  console.log("📥 DEBUG Request → /send-chat-notification:", req.body);
+
   try {
     const { toUid, title, body, messageType } = req.body;
 
     if (!toUid || !title)
       return res.status(400).json({ success: false, message: "Missing fields" });
 
-    let finalBody = body;
-
-    if (!finalBody || finalBody.trim() === "") {
-      switch (messageType) {
-        case "audio": finalBody = "Sent you a voice message 🎤"; break;
-        case "image": finalBody = "Sent you a photo 📷"; break;
-        case "video": finalBody = "Sent you a video 🎥"; break;
-        case "document": finalBody = "Sent you a document 📄"; break;
-        default: finalBody = "Sent you a message 💬";
-      }
+    let finalBody = body || "";
+    if (finalBody.trim() === "") {
+      finalBody =
+        {
+          audio: "Sent you a voice message 🎤",
+          image: "Sent you a photo 📷",
+          video: "Sent you a video 🎥",
+          document: "Sent you a document 📄",
+        }[messageType] || "Sent you a message 💬";
     }
 
     const userDoc = await admin.firestore().collection("users").doc(toUid).get();
+    console.log("📄 DEBUG Firestore user lookup:", userDoc.exists);
 
     if (!userDoc.exists)
       return res.status(404).json({ success: false, message: "User not found" });
 
     const fcmToken = userDoc.data().deviceToken;
+    console.log("📱 DEBUG User FCM Token:", fcmToken);
 
     if (!fcmToken)
       return res.status(400).json({ success: false, message: "User has no FCM token" });
 
-    await sendNotification(fcmToken, title, finalBody, messageType || "chat");
+    const ok = await sendNotification(fcmToken, title, finalBody, messageType);
 
-    res.json({ success: true });
-
+    res.json({ success: ok });
   } catch (error) {
-    console.error("❌ Error sending chat notification:", error);
+    console.error("❌ CHAT Notification Error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // -----------------------------
-// Upload endpoint
+// 📌 Upload endpoint
 // -----------------------------
 app.post("/upload-message", upload.single("file"), async (req, res) => {
+  console.log("📥 DEBUG Upload:", req.file);
+
   try {
     const { senderId, receiverId, messageType } = req.body;
 
-    if (!req.file)
-      return res.status(400).json({ error: "File missing" });
-
-    if (!receiverId)
-      return res.status(400).json({ error: "ReceiverId missing" });
+    if (!req.file) return res.status(400).json({ error: "Missing file" });
+    if (!receiverId) return res.status(400).json({ error: "Missing receiverId" });
 
     const fileUrl = `/uploads/${req.file.filename}`;
-
-    console.log("File uploaded:", fileUrl);
+    console.log("📄 DEBUG File URL:", fileUrl);
 
     const userDoc = await admin.firestore().collection("users").doc(receiverId).get();
-
     if (!userDoc.exists)
       return res.status(404).json({ success: false, message: "Receiver not found" });
 
     const fcmToken = userDoc.data().deviceToken;
 
+    let messageBody =
+      {
+        audio: "Sent you a voice message 🎤",
+        image: "Sent you a photo 📷",
+        video: "Sent you a video 🎥",
+        document: "Sent you a document 📄",
+      }[messageType] || "Sent you a message 💬";
+
     if (fcmToken) {
-      let messageBody;
-
-      switch (messageType) {
-        case "audio": messageBody = "Sent you a voice message 🎤"; break;
-        case "image": messageBody = "Sent you a photo 📷"; break;
-        case "video": messageBody = "Sent you a video 🎥"; break;
-        case "document": messageBody = "Sent you a document 📄"; break;
-        default: messageBody = "Sent you a message 💬";
-      }
-
       await sendNotification(fcmToken, "New Message", messageBody, messageType);
     }
 
     res.json({ success: true, fileUrl });
-
   } catch (error) {
-    console.error("❌ Upload/message error:", error);
-    res.status(500).json({ error: "Failed to send message" });
+    console.error("❌ Upload Error:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 // -----------------------------
-// Start server
+// 🚀 Start Server
 // -----------------------------
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`🔥 Whisp backend running on port ${PORT}`);
+  console.log(`🔥 Whisp Backend Running on port ${PORT}`);
 });
