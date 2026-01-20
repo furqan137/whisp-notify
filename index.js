@@ -37,7 +37,7 @@ console.log("🔧 DEBUG: Validating Firebase Admin ENV variables...");
 console.log({
   project_id: process.env.PROJECT_ID,
   client_email: process.env.CLIENT_EMAIL,
-  private_key_exists: !!process.env.PRIVATE_KEY
+  private_key_exists: !!process.env.PRIVATE_KEY,
 });
 
 // IMPORTANT: MUST convert newline escapes to real newlines
@@ -129,7 +129,7 @@ async function sendGroupNotification({
   const groupData = groupSnap.data();
   const members = groupData.members || [];
 
-  const receivers = members.filter(uid => uid !== senderId);
+  const receivers = members.filter((uid) => uid !== senderId);
 
   if (receivers.length === 0) {
     console.log("⚠️ No group receivers");
@@ -147,13 +147,12 @@ async function sendGroupNotification({
       token,
       groupName || "Group Message",
       `${senderName}: ${body}`,
-      "group"
+      "group",
     );
   }
 
   return true;
 }
-
 
 // -----------------------------
 // 📌 POST /send-notification
@@ -177,37 +176,47 @@ app.post("/send-chat-notification", async (req, res) => {
   console.log("📥 DEBUG Request → /send-chat-notification:", req.body);
 
   try {
-    const { toUid, title, body, messageType } = req.body;
+    const { toUid, senderName, messageType, text } = req.body;
 
-    if (!toUid || !title)
-      return res.status(400).json({ success: false, message: "Missing fields" });
+    if (!toUid || !senderName)
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing fields" });
 
-    let finalBody = body || "";
-    if (finalBody.trim() === "") {
-      finalBody =
-        {
-          audio: "Sent you a voice message 🎤",
-          image: "Sent you a photo 📷",
-          video: "Sent you a video 🎥",
-          document: "Sent you a document 📄",
-        }[messageType] || "Sent you a message 💬";
-    }
+    const finalBody =
+      text && text.trim() !== ""
+        ? text
+        : {
+            audio: "sent you a voice message 🎤",
+            image: "sent you a photo 📷",
+            video: "sent you a video 🎥",
+            document: "sent you a document 📄",
+          }[messageType] || "sent you a message 💬";
 
-    const userDoc = await admin.firestore().collection("users").doc(toUid).get();
-    console.log("📄 DEBUG Firestore user lookup:", userDoc.exists);
-
+    const userDoc = await admin
+      .firestore()
+      .collection("users")
+      .doc(toUid)
+      .get();
     if (!userDoc.exists)
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     const fcmToken = userDoc.data().deviceToken;
-    console.log("📱 DEBUG User FCM Token:", fcmToken);
-
     if (!fcmToken)
-      return res.status(400).json({ success: false, message: "User has no FCM token" });
+      return res
+        .status(400)
+        .json({ success: false, message: "User has no FCM token" });
 
-    const ok = await sendNotification(fcmToken, title, finalBody, messageType);
+    await sendNotification(
+      fcmToken,
+      senderName, // ✅ TITLE = SENDER NAME
+      finalBody,
+      "chat",
+    );
 
-    res.json({ success: ok });
+    res.json({ success: true });
   } catch (error) {
     console.error("❌ CHAT Notification Error:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -223,28 +232,53 @@ app.post("/upload-message", upload.single("file"), async (req, res) => {
   try {
     const { senderId, receiverId, messageType } = req.body;
 
+    let senderName = req.body.senderName;
+
+    if (!senderName && senderId) {
+      const senderSnap = await admin
+        .firestore()
+        .collection("users")
+        .doc(senderId)
+        .get();
+      if (senderSnap.exists) {
+        senderName =
+          senderSnap.data().username || senderSnap.data().name || "Someone";
+      }
+    }
+
     if (!req.file) return res.status(400).json({ error: "Missing file" });
-    if (!receiverId) return res.status(400).json({ error: "Missing receiverId" });
+    if (!receiverId)
+      return res.status(400).json({ error: "Missing receiverId" });
 
     const fileUrl = `/uploads/${req.file.filename}`;
-    console.log("📄 DEBUG File URL:", fileUrl);
 
-    const userDoc = await admin.firestore().collection("users").doc(receiverId).get();
+    const userDoc = await admin
+      .firestore()
+      .collection("users")
+      .doc(receiverId)
+      .get();
     if (!userDoc.exists)
-      return res.status(404).json({ success: false, message: "Receiver not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Receiver not found" });
 
     const fcmToken = userDoc.data().deviceToken;
 
-    let messageBody =
+    const messageBody =
       {
-        audio: "Sent you a voice message 🎤",
-        image: "Sent you a photo 📷",
-        video: "Sent you a video 🎥",
-        document: "Sent you a document 📄",
-      }[messageType] || "Sent you a message 💬";
+        audio: "sent you a voice message 🎤",
+        image: "sent you a photo 📷",
+        video: "sent you a video 🎥",
+        document: "sent you a document 📄",
+      }[messageType] || "sent you a message 💬";
 
     if (fcmToken) {
-      await sendNotification(fcmToken, "New Message", messageBody, messageType);
+      await sendNotification(
+        fcmToken,
+        senderName || "Someone",
+        messageBody,
+        "chat",
+      );
     }
 
     res.json({ success: true, fileUrl });
@@ -253,7 +287,6 @@ app.post("/upload-message", upload.single("file"), async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 
 // -----------------------------
 // endpoint Group
@@ -265,7 +298,9 @@ app.post("/send-group-notification", async (req, res) => {
     const { groupId, senderId, senderName, groupName, body } = req.body;
 
     if (!groupId || !senderId || !body) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing fields" });
     }
 
     const ok = await sendGroupNotification({
@@ -283,7 +318,6 @@ app.post("/send-group-notification", async (req, res) => {
   }
 });
 
-
 // -----------------------------
 // 🚀 Start Server
 // -----------------------------
@@ -291,4 +325,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🔥 Whisp Backend Running on port ${PORT}`);
 });
-
