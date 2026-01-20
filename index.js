@@ -106,6 +106,56 @@ async function sendNotification(token, title, body, type = "chat") {
 }
 
 // -----------------------------
+// 🔔 Helper: Send Notification Group Chat
+// -----------------------------
+
+async function sendGroupNotification({
+  groupId,
+  senderId,
+  senderName,
+  groupName,
+  body,
+}) {
+  console.log("📢 GROUP NOTIFY:", { groupId, senderId });
+
+  const groupRef = admin.firestore().collection("groups").doc(groupId);
+  const groupSnap = await groupRef.get();
+
+  if (!groupSnap.exists) {
+    console.log("❌ Group not found");
+    return false;
+  }
+
+  const groupData = groupSnap.data();
+  const members = groupData.members || [];
+
+  const receivers = members.filter(uid => uid !== senderId);
+
+  if (receivers.length === 0) {
+    console.log("⚠️ No group receivers");
+    return true;
+  }
+
+  for (const uid of receivers) {
+    const userSnap = await admin.firestore().collection("users").doc(uid).get();
+    if (!userSnap.exists) continue;
+
+    const token = userSnap.data().deviceToken;
+    if (!token) continue;
+
+    await sendNotification(
+      token,
+      groupName || "Group Message",
+      `${senderName}: ${body}`,
+      "group"
+    );
+  }
+
+  return true;
+}
+
+
+// -----------------------------
 // 📌 POST /send-notification
 // -----------------------------
 app.post("/send-notification", async (req, res) => {
@@ -204,6 +254,36 @@ app.post("/upload-message", upload.single("file"), async (req, res) => {
   }
 });
 
+
+// -----------------------------
+// endpoint Group
+// -----------------------------
+app.post("/send-group-notification", async (req, res) => {
+  console.log("📥 GROUP NOTIFICATION:", req.body);
+
+  try {
+    const { groupId, senderId, senderName, groupName, body } = req.body;
+
+    if (!groupId || !senderId || !body) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const ok = await sendGroupNotification({
+      groupId,
+      senderId,
+      senderName: senderName || "Someone",
+      groupName,
+      body,
+    });
+
+    res.json({ success: ok });
+  } catch (e) {
+    console.error("❌ GROUP NOTIFICATION ERROR:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+
 // -----------------------------
 // 🚀 Start Server
 // -----------------------------
@@ -211,3 +291,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🔥 Whisp Backend Running on port ${PORT}`);
 });
+
